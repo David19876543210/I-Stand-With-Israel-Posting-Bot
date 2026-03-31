@@ -127,18 +127,21 @@ def format_message(original_text: str, source_channel: str) -> str:
 async def main():
     await client.start(phone=config.PHONE_NUMBER)
 
-    source_ids = []
+    # Resolve source channel IDs
+    source_ids = set()
     print("=== Resolving source channels ===")
     for ch in config.SOURCE_CHANNELS:
         try:
             entity = await client.get_entity(ch)
-            source_ids.append(entity.id)
+            source_ids.add(entity.id)
+            # Also add with -100 prefix variant
+            source_ids.add(int(f"-100{entity.id}"))
             print(f"✅ Listening to: {entity.title} (ID: {entity.id})")
         except Exception as e:
             print(f"❌ Could not resolve '{ch}': {e}")
 
     if not source_ids:
-        print("❌ No valid source channels found. Check your environment variables.")
+        print("❌ No valid source channels found.")
         return
 
     try:
@@ -149,30 +152,32 @@ async def main():
         print(f"❌ Could not resolve target channel: {e}")
         return
 
-    @client.on(events.NewMessage())
-    async def debug_all(event):
-        try:
-            chat = await event.get_chat()
-            chat_title = getattr(chat, 'title', getattr(chat, 'username', 'DM'))
-            print(f"[DEBUG] Message from: '{chat_title}' (ID: {chat.id})")
-        except Exception as e:
-            print(f"[DEBUG] Message received: {e}")
+    print(f"Watching IDs: {source_ids}\n")
 
-    @client.on(events.NewMessage(chats=source_ids))
+    # Catch ALL messages and manually filter by ID
+    @client.on(events.NewMessage())
     async def forward_handler(event):
         try:
-            message = event.message
-            source = await event.get_chat()
-            source_name = getattr(source, 'title', getattr(source, 'username', 'Unknown'))
-            text = message.text or message.caption or ""
+            chat = await event.get_chat()
+            chat_id = getattr(chat, 'id', None)
+            chat_title = getattr(chat, 'title', getattr(chat, 'username', 'Unknown'))
 
-            logger.info(f"📨 New message from: {source_name}")
+            print(f"[DEBUG] Message from: '{chat_title}' (ID: {chat_id})")
 
-            if await is_advertisement(text):
-                logger.info(f"🚫 Skipped ad from {source_name}")
+            # Manual ID check
+            if chat_id not in source_ids:
                 return
 
-            formatted_text = format_message(text, source_name)
+            message = event.message
+            text = message.text or message.caption or ""
+
+            logger.info(f"📨 Matched source! Processing from: {chat_title}")
+
+            if await is_advertisement(text):
+                logger.info(f"🚫 Skipped ad from {chat_title}")
+                return
+
+            formatted_text = format_message(text, chat_title)
 
             if message.media:
                 if isinstance(message.media, (MessageMediaPhoto, MessageMediaDocument)):
@@ -190,10 +195,10 @@ async def main():
                 if formatted_text.strip():
                     await client.send_message(target_id, formatted_text, parse_mode='markdown')
 
-            logger.info(f"✅ Forwarded from {source_name}")
+            logger.info(f"✅ Forwarded from {chat_title}")
 
         except Exception as e:
-            logger.error(f"Error forwarding message: {e}")
+            logger.error(f"Error in forward_handler: {e}")
 
     logger.info("Bot started. Listening for new messages...")
     print("✅ Bot is running!\n")
