@@ -4,6 +4,16 @@ const globalForPrisma = globalThis as unknown as {
   prisma: PrismaClient | undefined
 }
 
+declare global {
+  interface BigInt {
+    toJSON(): string
+  }
+}
+
+BigInt.prototype.toJSON = function (): string {
+  return this.toString()
+}
+
 export const prisma =
   globalForPrisma.prisma ??
   new PrismaClient({
