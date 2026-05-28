@@ -11,7 +11,6 @@ All logic has been migrated to:
   - lib/ad-detection.ts    (Ad keyword + AI detection)
   - lib/openrouter.ts      (OpenRouter translation)
   - app/api/telegram/webhook/route.ts (webhook handler)
-  - app/api/cron/*         (scheduled jobs)
 
 To run locally:
   1. Set TELEGRAM_BOT_TOKEN in .env

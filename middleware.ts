@@ -19,10 +19,6 @@ export function middleware(request: NextRequest) {
   if (publicPaths.includes(pathname)) {
     return NextResponse.next()
   }
-  if (pathname.startsWith("/api/cron/")) {
-    return NextResponse.next()
-  }
-
   // Protected paths — check auth
   const protectedPatterns = [
     "/dashboard",

@@ -15,8 +15,7 @@ Serverless Telegram channel forwarding with AI translation. Built on Next.js 14 
  │  /api/channels/*      ← Channel CRUD    │
  │  /api/logs            ← Translation log │
  │  /api/settings        ← Bot config      │
- │  /api/cron/*          ← Cleanup + retry │
- │                                          │
+  │                                          │
  │  All logic: ad detect → translate →     │
  │  forward (via Bot API) → log (Prisma)   │
  └──────────────────────┬───────────────────┘
@@ -65,7 +64,6 @@ INGEST_SECRET=choose-a-random-secret
 
 # ── Optional ─────────────────────────
 OPENROUTER_MODEL=openai/gpt-oss-120b:free
-CRON_SECRET=your-cron-secret
 ADMIN_EMAIL=admin@example.com
 ADMIN_PASSWORD=admin123
 ```
@@ -137,7 +135,6 @@ asyncio.run(main())
 Set API_ID, API_HASH, and PHONE_NUMBER as env vars first, or hardcode them.
 
 ## API Routes
-
 | Method | Path | Purpose |
 |--------|------|---------|
 | POST | `/api/telegram/webhook` | Bot API webhook receiver |
@@ -149,9 +146,6 @@ Set API_ID, API_HASH, and PHONE_NUMBER as env vars first, or hardcode them.
 | POST | `/api/channels/sync` | Resolve chat IDs |
 | GET | `/api/logs` | View translation logs |
 | GET/POST | `/api/settings` | Bot configuration |
-| GET | `/api/cron/cleanup` | Clean logs older than 30d (daily) |
-| GET | `/api/cron/retry` | Retry failed forwards (every 6h) |
-
 ## Key Points
 
 - **Bot API** sends to target channels (you ARE admin there)
