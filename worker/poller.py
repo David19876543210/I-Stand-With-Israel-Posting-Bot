@@ -1,0 +1,157 @@
+"""
+Lightweight Telethon poller for reading source channels where
+the bot is NOT an admin.
+
+Reads messages from source channels via a user account (Telethon)
+and POSTs them to the Vercel ingest endpoint for processing.
+
+Run this on Railway, a VPS, or any host that supports long-running processes.
+
+Usage:
+  pip install telethon httpx python-dotenv
+  python poller.py
+
+Environment variables required:
+  API_ID, API_HASH, PHONE_NUMBER, SESSION_STRING
+  INGEST_URL (your Vercel deployment URL + /api/ingest)
+  INGEST_SECRET (shared secret for auth)
+  SOURCE_CHANNEL_IDS (comma-separated Telegram chat IDs)
+"""
+
+import os
+import asyncio
+import json
+import logging
+import httpx
+from dotenv import load_dotenv
+
+load_dotenv()
+
+from telethon import TelegramClient, events
+from telethon.sessions import StringSession
+from telethon.tl.types import MessageMediaPhoto, MessageMediaDocument
+
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO,
+)
+logger = logging.getLogger(__name__)
+
+INGEST_URL = os.environ.get("INGEST_URL", "").rstrip("/") + "/api/ingest"
+INGEST_SECRET = os.environ.get("INGEST_SECRET", "")
+API_ID = int(os.environ.get("API_ID", 0))
+API_HASH = os.environ.get("API_HASH", "")
+PHONE_NUMBER = os.environ.get("PHONE_NUMBER", "")
+SESSION_STRING = os.environ.get("SESSION_STRING", "")
+SOURCE_CHANNEL_IDS = os.environ.get("SOURCE_CHANNEL_IDS",
+                                      os.environ.get("SOURCE_CHANNELS", ""))
+
+
+def parse_channel_ids(raw: str) -> list[int]:
+    ids = []
+    for part in raw.split(","):
+        part = part.strip()
+        if part:
+            try:
+                ids.append(int(part))
+            except ValueError:
+                logger.warning(f"Invalid channel ID: {part}")
+    return ids
+
+
+def build_payload(message, chat_id: int, chat_title: str) -> dict:
+    text = message.text or message.caption or ""
+    payload = {
+        "sourceChatId": chat_id,
+        "sourceTitle": chat_title,
+        "text": text,
+        "messageId": message.id,
+        "hasMedia": bool(message.media),
+    }
+
+    if message.media:
+        if isinstance(message.media, MessageMediaPhoto):
+            payload["photo"] = {"fileId": message.media.photo.id}
+        elif isinstance(message.media, MessageMediaDocument):
+            doc = message.media.document
+            payload["document"] = {
+                "fileId": doc.id,
+                "mimeType": doc.mime_type,
+            }
+
+    return payload
+
+
+async def send_to_ingest(payload: dict) -> bool:
+    try:
+        async with httpx.AsyncClient(timeout=30) as http:
+            resp = await http.post(
+                INGEST_URL,
+                json=payload,
+                headers={
+                    "Authorization": f"Bearer {INGEST_SECRET}",
+                    "Content-Type": "application/json",
+                },
+            )
+            if resp.status_code != 200:
+                logger.error(f"Ingest error {resp.status_code}: {resp.text}")
+                return False
+            return True
+    except Exception as e:
+        logger.error(f"Ingest connection error: {e}")
+        return False
+
+
+async def main():
+    channel_ids = parse_channel_ids(SOURCE_CHANNEL_IDS)
+    if not channel_ids:
+        logger.error("No valid SOURCE_CHANNEL_IDS found")
+        return
+
+    if not INGEST_URL or INGEST_URL == "/api/ingest":
+        logger.error("INGEST_URL is not configured")
+        return
+
+    logger.info(f"Watching {len(channel_ids)} channels: {channel_ids}")
+    logger.info(f"Ingest URL: {INGEST_URL}")
+
+    session = StringSession(SESSION_STRING) if SESSION_STRING else "poller_session"
+    client = TelegramClient(session, API_ID, API_HASH)
+    await client.start(phone=PHONE_NUMBER)
+
+    resolved = {}
+    for cid in channel_ids:
+        try:
+            entity = await client.get_entity(cid)
+            resolved[cid] = entity
+            logger.info(f"Resolved {cid}: {getattr(entity, 'title', '?')}")
+        except Exception as e:
+            logger.error(f"Cannot resolve {cid}: {e}")
+
+    if not resolved:
+        logger.error("No channels could be resolved")
+        return
+
+    @client.on(events.NewMessage())
+    async def handler(event):
+        chat = await event.get_chat()
+        chat_id = getattr(chat, "id", None)
+        if chat_id not in resolved:
+            return
+
+        chat_title = getattr(chat, "title", getattr(chat, "username", str(chat_id)))
+        payload = build_payload(event.message, chat_id, chat_title)
+
+        logger.info(f"Message from {chat_title}: {payload.get('text', '')[:60]}...")
+        ok = await send_to_ingest(payload)
+        if ok:
+            logger.info(f"Sent to ingest: {chat_title}")
+        else:
+            logger.warning(f"Failed to send: {chat_title}")
+
+    logger.info("Poller running. Listening for new messages...")
+    await client.run_until_disconnected()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

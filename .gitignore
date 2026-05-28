@@ -4,3 +4,25 @@
 *.session-journal
 __pycache__/
 *.pyc
+
+# Next.js
+.next/
+out/
+
+# Dependencies
+node_modules/
+
+# Prisma
+prisma/migrations/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+*.swp
+*.swo
+
+# Logs
+*.log

@@ -1,0 +1,75 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model SourceChannel {
+  id              String        @id @default(cuid())
+  username        String        @unique
+  title           String?
+  telegramChatId  BigInt?
+  lastMessageId   Int?
+  isActive        Boolean       @default(true)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  pairs           ForwardingPair[]
+  logs            TranslationLog[]
+}
+
+model TargetChannel {
+  id              String        @id @default(cuid())
+  username        String        @unique
+  title           String?
+  telegramChatId  BigInt?
+  isActive        Boolean       @default(true)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  pairs           ForwardingPair[]
+  logs            TranslationLog[]
+}
+
+model ForwardingPair {
+  id              String        @id @default(cuid())
+  sourceChannelId String
+  targetChannelId String
+  isActive        Boolean       @default(true)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  sourceChannel   SourceChannel @relation(fields: [sourceChannelId], references: [id], onDelete: Cascade)
+  targetChannel   TargetChannel @relation(fields: [targetChannelId], references: [id], onDelete: Cascade)
+
+  @@unique([sourceChannelId, targetChannelId])
+}
+
+model TranslationLog {
+  id              String        @id @default(cuid())
+  sourceChannelId String?
+  sourceChannel   SourceChannel? @relation(fields: [sourceChannelId], references: [id], onDelete: SetNull)
+  targetChannelId String?
+  targetChannel   TargetChannel? @relation(fields: [targetChannelId], references: [id], onDelete: SetNull)
+  originalText    String
+  translatedText  String?
+  sourceLanguage  String?
+  detectedLang    String?
+  model           String?
+  isAd            Boolean       @default(false)
+  adDetectedBy    String?       @default("keyword")
+  forwardedAt     DateTime      @default(now())
+  status          String        @default("forwarded")
+  errorMessage    String?
+  retryCount      Int           @default(0)
+}
+
+model BotSetting {
+  id                    String  @id @default("singleton")
+  isRunning             Boolean @default(true)
+  adDetectionEnabled    Boolean @default(true)
+  aiAdDetection         Boolean @default(true)
+  translationEnabled    Boolean @default(true)
+  updatedAt             DateTime @updatedAt
+}
