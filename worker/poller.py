@@ -25,7 +25,8 @@ import logging
 import httpx
 from dotenv import load_dotenv
 
-load_dotenv()
+dotenv_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
+load_dotenv(dotenv_path)
 
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
@@ -123,8 +124,9 @@ async def main():
     for cid in channel_ids:
         try:
             entity = await client.get_entity(cid)
-            resolved[cid] = entity
-            logger.info(f"Resolved {cid}: {getattr(entity, 'title', '?')}")
+            raw_id = getattr(entity, "id", cid)
+            resolved[raw_id] = entity
+            logger.info(f"Resolved {cid}: {getattr(entity, 'title', '?')} (id: {raw_id})")
         except Exception as e:
             logger.error(f"Cannot resolve {cid}: {e}")
 
