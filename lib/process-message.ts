@@ -11,6 +11,7 @@ import {
 export interface IncomingMessage {
   sourceChatId: number
   sourceTitle?: string
+  sourceUsername?: string
   text?: string | null
   messageId: number
   photo?: { fileId: string; fileSize?: number } | null
@@ -35,15 +36,28 @@ export async function processMessage(msg: IncomingMessage): Promise<{
   skipped?: boolean
   error?: string
 }> {
+  const id = msg.sourceChatId
+  const idWithoutPrefix = id < 0 ? Math.abs(id) % 1000000000000 : id
+  const idWithPrefix = id > 0 ? -id - 1000000000000 : id
+
+  const orClauses: any[] = [
+    { telegramChatId: id },
+    { telegramChatId: BigInt(id) },
+  ]
+  if (msg.sourceUsername) {
+    orClauses.push({ username: msg.sourceUsername.replace("@", "") })
+  }
+  if (idWithoutPrefix !== id) {
+    orClauses.push({ telegramChatId: idWithoutPrefix })
+    orClauses.push({ telegramChatId: BigInt(idWithoutPrefix) })
+  }
+  if (idWithPrefix !== id) {
+    orClauses.push({ telegramChatId: idWithPrefix })
+    orClauses.push({ telegramChatId: BigInt(idWithPrefix) })
+  }
+
   const sourceChannel = await prisma.sourceChannel.findFirst({
-    where: {
-      OR: [
-        { telegramChatId: msg.sourceChatId },
-        ...(typeof msg.sourceChatId === "number"
-          ? [{ telegramChatId: BigInt(msg.sourceChatId) }]
-          : []),
-      ],
-    },
+    where: { OR: orClauses },
   })
 
   if (!sourceChannel || !sourceChannel.isActive) {

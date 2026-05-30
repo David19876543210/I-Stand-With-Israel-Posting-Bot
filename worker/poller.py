@@ -62,8 +62,11 @@ def parse_channel_ids(raw: str) -> list[int]:
 
 def build_payload(message, chat_id: int, chat_title: str) -> dict:
     text = message.text or message.caption or ""
+    # Telethon returns internal channel IDs (e.g. 1406113886).
+    # Bot API uses -100 prefix (e.g. -1001406113886).
+    source_chat_id = int(f"-100{abs(chat_id)}")
     payload = {
-        "sourceChatId": chat_id,
+        "sourceChatId": source_chat_id,
         "sourceTitle": chat_title,
         "text": text,
         "messageId": message.id,
@@ -142,7 +145,10 @@ async def main():
             return
 
         chat_title = getattr(chat, "title", getattr(chat, "username", str(chat_id)))
+        chat_username = getattr(chat, "username", None)
         payload = build_payload(event.message, chat_id, chat_title)
+        if chat_username:
+            payload["sourceUsername"] = chat_username
 
         logger.info(f"Message from {chat_title}: {payload.get('text', '')[:60]}...")
         ok = await send_to_ingest(payload)
@@ -156,4 +162,11 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    while True:
+        try:
+            asyncio.run(main())
+        except Exception as e:
+            logger.error(f"Poller crashed: {e}")
+        logger.info("Restarting poller in 30 seconds...")
+        import time
+        time.sleep(30)

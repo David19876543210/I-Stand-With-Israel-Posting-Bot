@@ -45,6 +45,7 @@ export async function POST(request: Request) {
     const incoming: IncomingMessage = {
       sourceChatId: message.chat.id,
       sourceTitle: message.chat.title || sourceChannel.title || undefined,
+      sourceUsername: sourceChannel.username || message.chat.username || undefined,
       text: message.text || message.caption || null,
       messageId: message.message_id,
       photo: message.photo?.length
