@@ -20,7 +20,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { useToast } from "@/components/ui/use-toast"
-import { Search, ChevronLeft, ChevronRight, Globe, AlertTriangle, CheckCircle } from "lucide-react"
+import { Search, ChevronLeft, ChevronRight, Globe, AlertTriangle, CheckCircle, Trash2 } from "lucide-react"
 
 interface TranslationLog {
   id: string
@@ -31,6 +31,7 @@ interface TranslationLog {
   isAd: boolean
   status: string
   errorMessage: string | null
+  targetMessageId: number | null
   forwardedAt: string
   sourceChannel?: {
     username: string
@@ -111,7 +112,7 @@ export default function LogsPage() {
               <SelectContent>
                 <SelectItem value="all">All Status</SelectItem>
                 <SelectItem value="forwarded">Forwarded</SelectItem>
-                <SelectItem value="skipped_ad">Skipped (Ad)</SelectItem>
+                <SelectItem value="deleted">Deleted</SelectItem>
                 <SelectItem value="error">Error</SelectItem>
               </SelectContent>
             </Select>
@@ -145,17 +146,16 @@ export default function LogsPage() {
                         <Badge
                           variant={
                             log.status === "forwarded"
-                              ? "success"
-                              : log.status === "skipped_ad"
-                              ? "warning"
+                              ? log.isAd ? "warning" : "success"
+                              : log.status === "deleted"
+                              ? "outline"
                               : "destructive"
                           }
                         >
-                          {log.status === "forwarded" && <CheckCircle className="h-3 w-3 mr-1" />}
-                          {log.status === "skipped_ad" && <AlertTriangle className="h-3 w-3 mr-1" />}
-                          {log.status}
+                          {log.status === "forwarded" && !log.isAd && <CheckCircle className="h-3 w-3 mr-1" />}
+                          {log.isAd && <AlertTriangle className="h-3 w-3 mr-1" />}
+                          {log.isAd ? "Pending Review" : log.status}
                         </Badge>
-                        {log.isAd && <Badge variant="warning">Ad</Badge>}
                         {log.sourceChannel && (
                           <span className="text-xs text-muted-foreground">
                             {log.sourceChannel.title || log.sourceChannel.username}
@@ -164,6 +164,26 @@ export default function LogsPage() {
                         <span className="text-xs text-muted-foreground">
                           {new Date(log.forwardedAt).toLocaleString()}
                         </span>
+                        {log.status === "forwarded" && log.isAd && log.targetMessageId && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-6 px-2 text-destructive hover:text-destructive"
+                            onClick={async () => {
+                              if (!confirm("Delete this message from the target channel?")) return
+                              try {
+                                await fetch(`/api/logs/${log.id}`, { method: "DELETE" })
+                                toast({ title: "Deleted", description: "Message removed from channel" })
+                                fetchLogs()
+                              } catch {
+                                toast({ title: "Error", description: "Failed to delete", variant: "destructive" })
+                              }
+                            }}
+                          >
+                            <Trash2 className="h-3 w-3 mr-1" />
+                            Delete
+                          </Button>
+                        )}
                       </div>
                       <div className="text-sm">
                         <p className="text-muted-foreground line-clamp-2">

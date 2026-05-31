@@ -89,19 +89,6 @@ export async function processMessage(msg: IncomingMessage): Promise<{
     settings.aiAdDetection
   )
 
-  if (adResult.isAd) {
-    await prisma.translationLog.create({
-      data: {
-        sourceChannelId: sourceChannel.id,
-        originalText: text.slice(0, 1000),
-        status: "skipped_ad",
-        isAd: true,
-        adDetectedBy: adResult.method,
-      },
-    })
-    return { handled: true, skipped: true }
-  }
-
   let translatedText: string | null = null
   let detectedLang: string | null = null
 
@@ -153,24 +140,31 @@ export async function processMessage(msg: IncomingMessage): Promise<{
 
     try {
       const caption = formatBody(text, sourceTitle, translatedText)
+      let targetMsgId: number | undefined
 
       if (msg.photoData) {
         const buf = Buffer.from(msg.photoData, "base64")
-        await sendPhotoUpload(targetChatId, buf, caption.slice(0, 1024))
+        const sent = await sendPhotoUpload(targetChatId, buf, caption.slice(0, 1024))
+        targetMsgId = sent.message_id
       } else if (msg.documentData) {
         const buf = Buffer.from(msg.documentData, "base64")
         const ext = msg.documentMime?.includes("video") ? "mp4" : msg.documentMime?.includes("gif") ? "gif" : "bin"
-        await sendDocumentUpload(targetChatId, buf, caption.slice(0, 1024), ext)
+        const sent = await sendDocumentUpload(targetChatId, buf, caption.slice(0, 1024), ext)
+        targetMsgId = sent.message_id
       } else if (msg.photo?.fileId) {
-        await sendPhoto(targetChatId, msg.photo.fileId, caption.slice(0, 1024))
+        const sent = await sendPhoto(targetChatId, msg.photo.fileId, caption.slice(0, 1024))
+        targetMsgId = sent.message_id
       } else if (msg.document?.fileId) {
-        await sendDocument(targetChatId, msg.document.fileId, caption.slice(0, 1024))
+        const sent = await sendDocument(targetChatId, msg.document.fileId, caption.slice(0, 1024))
+        targetMsgId = sent.message_id
       } else if (msg.hasMedia) {
-        await copyMessage(targetChatId, msg.sourceChatId, msg.messageId, {
+        const sent = await copyMessage(targetChatId, msg.sourceChatId, msg.messageId, {
           caption: caption.slice(0, 1024),
         })
+        targetMsgId = sent.message_id
       } else if (caption) {
-        await sendMessage(targetChatId, caption)
+        const sent = await sendMessage(targetChatId, caption)
+        targetMsgId = sent.message_id
       }
 
       await prisma.translationLog.create({
@@ -181,7 +175,10 @@ export async function processMessage(msg: IncomingMessage): Promise<{
           translatedText: translatedText?.slice(0, 1000),
           detectedLang,
           status: "forwarded",
-          isAd: false,
+          isAd: adResult.isAd,
+          adDetectedBy: adResult.method,
+          targetChatId: BigInt(targetChatId),
+          targetMessageId: targetMsgId,
         },
       })
     } catch (err: any) {
@@ -195,6 +192,8 @@ export async function processMessage(msg: IncomingMessage): Promise<{
           detectedLang,
           status: "error",
           errorMessage: err.message?.slice(0, 500) || "Forward failed",
+          isAd: adResult.isAd,
+          adDetectedBy: adResult.method,
         },
       })
     }

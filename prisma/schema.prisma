@@ -59,6 +59,8 @@ model TranslationLog {
   model           String?
   isAd            Boolean       @default(false)
   adDetectedBy    String?       @default("keyword")
+  targetChatId    BigInt?
+  targetMessageId Int?
   forwardedAt     DateTime      @default(now())
   status          String        @default("forwarded")
   errorMessage    String?

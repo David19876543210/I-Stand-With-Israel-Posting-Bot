@@ -282,6 +282,14 @@ export async function getChatMemberCount(
   return call<number>("getChatMemberCount", { chat_id: chatId })
 }
 
+export async function deleteMessage(
+  chatId: number | string,
+  messageId: number
+): Promise<boolean> {
+  await call("deleteMessage", { chat_id: chatId, message_id: messageId })
+  return true
+}
+
 export async function leaveChat(
   chatId: number | string
 ): Promise<boolean> {
