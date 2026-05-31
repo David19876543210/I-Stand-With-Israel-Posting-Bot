@@ -137,19 +137,22 @@ async def main():
         logger.error("No channels could be resolved")
         return
 
-    @client.on(events.NewMessage())
-    async def handler(event):
-        chat = await event.get_chat()
-        chat_id = getattr(chat, "id", None)
-        if chat_id not in resolved:
-            return
+    last_message_id = {}
+    for cid, entity in resolved.items():
+        try:
+            msgs = await client.get_messages(entity, limit=1)
+            last_message_id[cid] = msgs[0].id if msgs else 0
+            logger.info(f"Last message ID for {getattr(entity, 'title', cid)}: {last_message_id[cid]}")
+        except Exception as e:
+            logger.warning(f"Could not get last message for {cid}: {e}")
+            last_message_id[cid] = 0
 
+    async def process_and_send(message, chat, chat_id):
         chat_title = getattr(chat, "title", getattr(chat, "username", str(chat_id)))
         chat_username = getattr(chat, "username", None)
-        payload = build_payload(event.message, chat_id, chat_title)
+        payload = build_payload(message, chat_id, chat_title)
         if chat_username:
             payload["sourceUsername"] = chat_username
-
         logger.info(f"Message from {chat_title}: {payload.get('text', '')[:60]}...")
         ok = await send_to_ingest(payload)
         if ok:
@@ -157,8 +160,38 @@ async def main():
         else:
             logger.warning(f"Failed to send: {chat_title}")
 
+    @client.on(events.NewMessage())
+    async def handler(event):
+        chat = await event.get_chat()
+        chat_id = getattr(chat, "id", None)
+        if chat_id not in resolved:
+            return
+        if event.message.id <= last_message_id.get(chat_id, 0):
+            return
+        last_message_id[chat_id] = event.message.id
+        await process_and_send(event.message, chat, chat_id)
+
+    async def poll_channels():
+        while True:
+            for cid, entity in resolved.items():
+                try:
+                    msgs = await client.get_messages(entity, limit=1)
+                    if not msgs:
+                        continue
+                    msg = msgs[0]
+                    if msg.id > last_message_id.get(cid, 0):
+                        last_message_id[cid] = msg.id
+                        chat = await client.get_entity(cid)
+                        logger.info(f"Polled new message from {getattr(chat, 'title', cid)}")
+                        await process_and_send(msg, chat, cid)
+                except Exception as e:
+                    logger.warning(f"Poll error for {cid}: {e}")
+            await asyncio.sleep(30)
+
     logger.info("Poller running. Listening for new messages...")
+    task = asyncio.create_task(poll_channels())
     await client.run_until_disconnected()
+    task.cancel()
 
 
 if __name__ == "__main__":
