@@ -51,6 +51,13 @@ SOURCE_CHANNEL_IDS = os.environ.get("SOURCE_CHANNEL_IDS",
                                       os.environ.get("SOURCE_CHANNELS", ""))
 
 
+def strip_minus_100_prefix(val: int) -> int:
+    s = str(val)
+    if s.startswith("-100"):
+        return int(s[4:])
+    return abs(val)
+
+
 def parse_channel_ids(raw: str) -> list[int]:
     ids = []
     for part in raw.split(","):
@@ -170,6 +177,8 @@ async def main():
         logger.error("No channels could be resolved")
         return
 
+    failed_resolve: set[int | str] = set()
+
     last_message_id = {}
     for cid, entity in resolved.items():
         try:
@@ -233,13 +242,19 @@ async def main():
                 sources = await fetch_sources_from_api()
                 if sources:
                     new_ids = get_channel_identifiers_from_api(sources)
-                    current_ids = set(
-                        int(getattr(e, "id", 0)) if isinstance(getattr(e, "id", 0), int) else 0
-                        for e in resolved.values()
-                    )
-                    need_resolve = [i for i in new_ids if i not in current_ids and not any(
-                        getattr(e, "username", None) == i for e in resolved.values()
-                    )]
+                    current_ids: set[int | str] = set()
+                    for e in resolved.values():
+                        eid = getattr(e, "id", 0)
+                        if isinstance(eid, int):
+                            current_ids.add(eid)
+                            current_ids.add(int(f"-100{abs(eid)}"))
+                        uname = getattr(e, "username", None)
+                        if uname:
+                            current_ids.add(uname)
+                    need_resolve = [
+                        i for i in new_ids
+                        if i not in current_ids and i not in failed_resolve
+                    ]
                     if need_resolve:
                         logger.info(f"New channels detected: {need_resolve}")
                         new_entities = await resolve_channels(client, need_resolve)
@@ -251,6 +266,21 @@ async def main():
                             except Exception:
                                 last_message_id[cid] = 0
                             logger.info(f"Added new channel: {getattr(entity, 'title', cid)}")
+                        for ident in need_resolve:
+                            if isinstance(ident, str) and not ident.lstrip("-").isdigit():
+                                continue
+                            norm = strip_minus_100_prefix(int(ident))
+                            already_resolved = any(
+                                strip_minus_100_prefix(cid) == norm
+                                for cid in resolved
+                                if isinstance(cid, int)
+                            ) or any(
+                                ident == getattr(e, "username", None)
+                                for e in resolved.values()
+                            )
+                            if not already_resolved:
+                                failed_resolve.add(ident)
+                                logger.info(f"Will not retry unresolvable: {ident}")
             except Exception as e:
                 logger.warning(f"Source refresh error: {e}")
 
