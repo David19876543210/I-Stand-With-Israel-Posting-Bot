@@ -235,6 +235,41 @@ export async function sendDocument(
   })
 }
 
+export async function sendPhotoUpload(
+  chatId: number | string,
+  buffer: Buffer,
+  caption?: string
+): Promise<Message> {
+  if (!BOT_TOKEN) throw new Error("TELEGRAM_BOT_TOKEN is not configured")
+  const form = new FormData()
+  form.append("chat_id", String(chatId))
+  form.append("photo", new Blob([new Uint8Array(buffer)]), "photo.jpg")
+  if (caption) form.append("caption", caption)
+  form.append("parse_mode", "HTML")
+  const res = await fetch(`${API_BASE}/sendPhoto`, { method: "POST", body: form })
+  const data = await res.json()
+  if (!data.ok) throw new Error(`Telegram API error (sendPhoto): ${data.description}`)
+  return data.result
+}
+
+export async function sendDocumentUpload(
+  chatId: number | string,
+  buffer: Buffer,
+  caption?: string,
+  ext: string = "bin"
+): Promise<Message> {
+  if (!BOT_TOKEN) throw new Error("TELEGRAM_BOT_TOKEN is not configured")
+  const form = new FormData()
+  form.append("chat_id", String(chatId))
+  form.append("document", new Blob([new Uint8Array(buffer)]), `file.${ext}`)
+  if (caption) form.append("caption", caption)
+  form.append("parse_mode", "HTML")
+  const res = await fetch(`${API_BASE}/sendDocument`, { method: "POST", body: form })
+  const data = await res.json()
+  if (!data.ok) throw new Error(`Telegram API error (sendDocument): ${data.description}`)
+  return data.result
+}
+
 export async function getChat(
   chatId: number | string
 ): Promise<Chat> {

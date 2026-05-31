@@ -21,6 +21,7 @@ Environment variables required:
 import os
 import asyncio
 import json
+import base64
 import logging
 import httpx
 from dotenv import load_dotenv
@@ -145,6 +146,28 @@ async def main():
         payload = build_payload(message, chat_id, chat_title)
         if chat_username:
             payload["sourceUsername"] = chat_username
+
+        if message.media and hasattr(message.media, "photo"):
+            try:
+                file_bytes = await client.download_media(message, file=bytes)
+                if file_bytes and len(file_bytes) < 4_000_000:
+                    payload["photoData"] = base64.b64encode(file_bytes).decode()
+                    payload["hasMedia"] = True
+                    logger.info(f"Downloaded photo ({len(file_bytes)} bytes)")
+            except Exception as e:
+                logger.warning(f"Could not download photo: {e}")
+        elif message.media and hasattr(message.media, "document"):
+            try:
+                file_bytes = await client.download_media(message, file=bytes)
+                if file_bytes and len(file_bytes) < 4_000_000:
+                    mime = getattr(message.media.document, "mime_type", "application/octet-stream")
+                    payload["documentData"] = base64.b64encode(file_bytes).decode()
+                    payload["documentMime"] = mime
+                    payload["hasMedia"] = True
+                    logger.info(f"Downloaded document ({len(file_bytes)} bytes, {mime})")
+            except Exception as e:
+                logger.warning(f"Could not download document: {e}")
+
         logger.info(f"Message from {chat_title}: {payload.get('text', '')[:60]}...")
         ok = await send_to_ingest(payload)
         if ok:

@@ -4,7 +4,9 @@ import { isAdvertisement } from "@/lib/ad-detection"
 import {
   sendMessage,
   sendPhoto,
+  sendPhotoUpload,
   sendDocument,
+  sendDocumentUpload,
   copyMessage,
 } from "@/lib/telegram"
 
@@ -17,6 +19,9 @@ export interface IncomingMessage {
   photo?: { fileId: string; fileSize?: number } | null
   document?: { fileId: string; mimeType?: string } | null
   hasMedia?: boolean
+  photoData?: string
+  documentData?: string
+  documentMime?: string
 }
 
 function formatBody(
@@ -149,7 +154,14 @@ export async function processMessage(msg: IncomingMessage): Promise<{
     try {
       const caption = formatBody(text, sourceTitle, translatedText)
 
-      if (msg.photo?.fileId) {
+      if (msg.photoData) {
+        const buf = Buffer.from(msg.photoData, "base64")
+        await sendPhotoUpload(targetChatId, buf, caption.slice(0, 1024))
+      } else if (msg.documentData) {
+        const buf = Buffer.from(msg.documentData, "base64")
+        const ext = msg.documentMime?.includes("video") ? "mp4" : msg.documentMime?.includes("gif") ? "gif" : "bin"
+        await sendDocumentUpload(targetChatId, buf, caption.slice(0, 1024), ext)
+      } else if (msg.photo?.fileId) {
         await sendPhoto(targetChatId, msg.photo.fileId, caption.slice(0, 1024))
       } else if (msg.document?.fileId) {
         await sendDocument(targetChatId, msg.document.fileId, caption.slice(0, 1024))
