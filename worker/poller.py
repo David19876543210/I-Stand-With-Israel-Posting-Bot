@@ -196,24 +196,29 @@ async def main():
         if chat_username:
             payload["sourceUsername"] = chat_username
 
+        MAX_MEDIA_BYTES = 3_000_000
         if message.media and hasattr(message.media, "photo"):
             try:
                 file_bytes = await client.download_media(message, file=bytes)
-                if file_bytes and len(file_bytes) < 4_000_000:
+                if file_bytes and len(file_bytes) < MAX_MEDIA_BYTES:
                     payload["photoData"] = base64.b64encode(file_bytes).decode()
                     payload["hasMedia"] = True
                     logger.info(f"Downloaded photo ({len(file_bytes)} bytes)")
+                elif file_bytes:
+                    logger.warning(f"Photo too large ({len(file_bytes)} bytes), skipping media")
             except Exception as e:
                 logger.warning(f"Could not download photo: {e}")
         elif message.media and hasattr(message.media, "document"):
             try:
                 file_bytes = await client.download_media(message, file=bytes)
-                if file_bytes and len(file_bytes) < 4_000_000:
+                if file_bytes and len(file_bytes) < MAX_MEDIA_BYTES:
                     mime = getattr(message.media.document, "mime_type", "application/octet-stream")
                     payload["documentData"] = base64.b64encode(file_bytes).decode()
                     payload["documentMime"] = mime
                     payload["hasMedia"] = True
                     logger.info(f"Downloaded document ({len(file_bytes)} bytes, {mime})")
+                elif file_bytes:
+                    logger.warning(f"Document too large ({len(file_bytes)} bytes, {getattr(message.media.document, 'mime_type', '?')}), skipping media")
             except Exception as e:
                 logger.warning(f"Could not download document: {e}")
 
