@@ -166,7 +166,7 @@ export async function sendMessage(
   return call<Message>("sendMessage", {
     chat_id: chatId,
     text,
-    parse_mode: options?.parse_mode ?? "Markdown",
+    parse_mode: options?.parse_mode ?? "HTML",
     disable_web_page_preview: options?.disable_web_page_preview ?? true,
     disable_notification: options?.disable_notification,
     reply_to_message_id: options?.reply_to_message_id,
@@ -202,7 +202,7 @@ export async function copyMessage(
     from_chat_id: fromChatId,
     message_id: messageId,
     caption: options?.caption,
-    parse_mode: options?.parse_mode,
+    parse_mode: options?.parse_mode ?? "HTML",
     disable_notification: options?.disable_notification,
   })
 }
@@ -217,7 +217,7 @@ export async function sendPhoto(
     chat_id: chatId,
     photo,
     caption,
-    parse_mode: parseMode,
+    parse_mode: parseMode ?? "HTML",
   })
 }
 
@@ -231,7 +231,7 @@ export async function sendDocument(
     chat_id: chatId,
     document,
     caption,
-    parse_mode: parseMode,
+    parse_mode: parseMode ?? "HTML",
   })
 }
 

@@ -30,6 +30,7 @@ interface TranslationLog {
   detectedLang: string | null
   isAd: boolean
   status: string
+  errorMessage: string | null
   forwardedAt: string
   sourceChannel?: {
     username: string
@@ -168,6 +169,11 @@ export default function LogsPage() {
                         <p className="text-muted-foreground line-clamp-2">
                           {log.originalText}
                         </p>
+                        {log.errorMessage && (
+                          <p className="text-xs text-destructive mt-1">
+                            {log.errorMessage}
+                          </p>
+                        )}
                         {log.translatedText && (
                           <div className="mt-2 p-2 bg-muted/50 rounded text-foreground">
                             <p className="text-xs text-muted-foreground mb-1">

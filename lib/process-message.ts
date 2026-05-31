@@ -25,10 +25,10 @@ function formatBody(
   translatedText?: string | null
 ): string {
   if (translatedText && translatedText !== originalText) {
-    return `${translatedText}\n\n📢 _Source: ${sourceTitle}_`
+    return `${translatedText}\n\n📢 <i>Source: ${sourceTitle}</i>`
   }
   const body = originalText || ""
-  return body ? `${body}\n\n📢 _Source: ${sourceTitle}_` : ""
+  return body ? `${body}\n\n📢 <i>Source: ${sourceTitle}</i>` : ""
 }
 
 export async function processMessage(msg: IncomingMessage): Promise<{
