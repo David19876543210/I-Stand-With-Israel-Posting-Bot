@@ -86,7 +86,7 @@ export async function translateText(
   const messages: ChatMessage[] = [
     {
       role: "system",
-      content: `You are a professional translator. Translate the following text to ${targetLang === "en" ? "English" : targetLang}. Only respond with the translation, no explanations. If the text is already in ${targetLang === "en" ? "English" : targetLang}, respond with "[ALREADY_TARGET_LANG]".`,
+      content: `You are a professional translator specializing in Hebrew and Arabic news. Translate the following text to ${targetLang === "en" ? "English" : targetLang}. Focus on the meaning and intent behind the message — use natural, fluent English that reads like a native wrote it. Avoid literal word-for-word translation. If the text is already in ${targetLang === "en" ? "English" : targetLang}, respond with "[ALREADY_TARGET_LANG]". Only respond with the translation, no explanations.`,
     },
     {
       role: "user",
