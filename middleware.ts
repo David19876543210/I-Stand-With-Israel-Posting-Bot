@@ -15,6 +15,7 @@ export function middleware(request: NextRequest) {
     "/api/ingest",
     "/api/telegram/webhook",
     "/api/translate",
+    "/api/channels/sources",
   ]
   if (publicPaths.includes(pathname)) {
     return NextResponse.next()

@@ -15,7 +15,7 @@ Environment variables required:
   API_ID, API_HASH, PHONE_NUMBER, SESSION_STRING
   INGEST_URL (your Vercel deployment URL + /api/ingest)
   INGEST_SECRET (shared secret for auth)
-  SOURCE_CHANNEL_IDS (comma-separated Telegram chat IDs)
+  SOURCE_CHANNEL_IDS (comma-separated Telegram chat IDs, used as fallback)
 """
 
 import os
@@ -39,7 +39,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-INGEST_URL = os.environ.get("INGEST_URL", "").rstrip("/") + "/api/ingest"
+BASE_URL = os.environ.get("INGEST_URL", "").rstrip("/")
+INGEST_URL = BASE_URL + "/api/ingest"
+SOURCES_URL = BASE_URL + "/api/channels/sources"
 INGEST_SECRET = os.environ.get("INGEST_SECRET", "")
 API_ID = int(os.environ.get("API_ID", 0))
 API_HASH = os.environ.get("API_HASH", "")
@@ -63,11 +65,7 @@ def parse_channel_ids(raw: str) -> list[int]:
 
 def build_payload(message, chat_id: int, chat_title: str) -> dict:
     text = message.text or message.caption or ""
-    # Telethon returns internal channel IDs (e.g. 1406113886).
-    # Bot API uses -100 prefix (e.g. -1001406113886).
     source_chat_id = int(f"-100{abs(chat_id)}")
-    # Don't forward media from poller — Telethon IDs can't be used
-    # with the Bot API, and the bot has no access to source channels.
     payload = {
         "sourceChatId": source_chat_id,
         "sourceTitle": chat_title,
@@ -75,7 +73,6 @@ def build_payload(message, chat_id: int, chat_title: str) -> dict:
         "messageId": message.id,
         "hasMedia": False,
     }
-
     return payload
 
 
@@ -99,33 +96,76 @@ async def send_to_ingest(payload: dict) -> bool:
         return False
 
 
-async def main():
-    channel_ids = parse_channel_ids(SOURCE_CHANNEL_IDS)
-    if not channel_ids:
-        logger.error("No valid SOURCE_CHANNEL_IDS found")
-        return
+async def fetch_sources_from_api() -> list[dict] | None:
+    try:
+        async with httpx.AsyncClient(timeout=15) as http:
+            resp = await http.get(
+                SOURCES_URL,
+                headers={"Authorization": f"Bearer {INGEST_SECRET}"},
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                channels = data.get("channels", [])
+                logger.info(f"Fetched {len(channels)} source channels from API")
+                return channels
+            else:
+                logger.warning(f"Sources API error {resp.status_code}: {resp.text}")
+                return None
+    except Exception as e:
+        logger.warning(f"Cannot fetch sources from API: {e}")
+        return None
 
+
+def get_channel_identifiers_from_api(channels: list[dict]) -> list[int | str]:
+    ids = []
+    for ch in channels:
+        tid = ch.get("telegramChatId")
+        if tid is not None:
+            try:
+                ids.append(int(tid))
+            except (ValueError, TypeError):
+                pass
+        username = ch.get("username", "")
+        if username and not any(str(i) == username for i in ids):
+            ids.append(username)
+    return ids
+
+
+async def resolve_channels(client: TelegramClient, identifiers: list) -> dict:
+    resolved = {}
+    for ident in identifiers:
+        try:
+            entity = await client.get_entity(ident)
+            raw_id = getattr(entity, "id", ident)
+            resolved[raw_id] = entity
+            logger.info(f"Resolved {ident}: {getattr(entity, 'title', '?')} (id: {raw_id})")
+        except Exception as e:
+            logger.warning(f"Cannot resolve {ident}: {e}")
+    return resolved
+
+
+async def main():
     if not INGEST_URL or INGEST_URL == "/api/ingest":
         logger.error("INGEST_URL is not configured")
         return
 
-    logger.info(f"Watching {len(channel_ids)} channels: {channel_ids}")
-    logger.info(f"Ingest URL: {INGEST_URL}")
+    sources = await fetch_sources_from_api()
+    if sources is None or len(sources) == 0:
+        logger.info("No channels from API, falling back to SOURCE_CHANNEL_IDS env var")
+        channel_ids = parse_channel_ids(SOURCE_CHANNEL_IDS)
+        identifiers: list = channel_ids
+    else:
+        identifiers = get_channel_identifiers_from_api(sources)
+
+    if not identifiers:
+        logger.error("No source channels configured")
+        return
 
     session = StringSession(SESSION_STRING) if SESSION_STRING else "poller_session"
     client = TelegramClient(session, API_ID, API_HASH)
     await client.start(phone=PHONE_NUMBER)
 
-    resolved = {}
-    for cid in channel_ids:
-        try:
-            entity = await client.get_entity(cid)
-            raw_id = getattr(entity, "id", cid)
-            resolved[raw_id] = entity
-            logger.info(f"Resolved {cid}: {getattr(entity, 'title', '?')} (id: {raw_id})")
-        except Exception as e:
-            logger.error(f"Cannot resolve {cid}: {e}")
-
+    resolved = await resolve_channels(client, identifiers)
     if not resolved:
         logger.error("No channels could be resolved")
         return
@@ -186,6 +226,34 @@ async def main():
         last_message_id[chat_id] = event.message.id
         await process_and_send(event.message, chat, chat_id)
 
+    async def refresh_sources():
+        while True:
+            await asyncio.sleep(300)
+            try:
+                sources = await fetch_sources_from_api()
+                if sources:
+                    new_ids = get_channel_identifiers_from_api(sources)
+                    current_ids = set(
+                        int(getattr(e, "id", 0)) if isinstance(getattr(e, "id", 0), int) else 0
+                        for e in resolved.values()
+                    )
+                    need_resolve = [i for i in new_ids if i not in current_ids and not any(
+                        getattr(e, "username", None) == i for e in resolved.values()
+                    )]
+                    if need_resolve:
+                        logger.info(f"New channels detected: {need_resolve}")
+                        new_entities = await resolve_channels(client, need_resolve)
+                        for cid, entity in new_entities.items():
+                            resolved[cid] = entity
+                            try:
+                                msgs = await client.get_messages(entity, limit=1)
+                                last_message_id[cid] = msgs[0].id if msgs else 0
+                            except Exception:
+                                last_message_id[cid] = 0
+                            logger.info(f"Added new channel: {getattr(entity, 'title', cid)}")
+            except Exception as e:
+                logger.warning(f"Source refresh error: {e}")
+
     async def poll_channels():
         while True:
             for cid, entity in resolved.items():
@@ -203,10 +271,12 @@ async def main():
                     logger.warning(f"Poll error for {cid}: {e}")
             await asyncio.sleep(30)
 
-    logger.info("Poller running. Listening for new messages...")
-    task = asyncio.create_task(poll_channels())
+    logger.info(f"Poller running. Watching {len(resolved)} channels...")
+    poll_task = asyncio.create_task(poll_channels())
+    refresh_task = asyncio.create_task(refresh_sources())
     await client.run_until_disconnected()
-    task.cancel()
+    poll_task.cancel()
+    refresh_task.cancel()
 
 
 if __name__ == "__main__":
