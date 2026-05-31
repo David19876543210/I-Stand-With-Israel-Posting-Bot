@@ -30,7 +30,7 @@ load_dotenv(dotenv_path)
 
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
-from telethon.tl.types import MessageMediaPhoto, MessageMediaDocument
+
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -65,23 +65,15 @@ def build_payload(message, chat_id: int, chat_title: str) -> dict:
     # Telethon returns internal channel IDs (e.g. 1406113886).
     # Bot API uses -100 prefix (e.g. -1001406113886).
     source_chat_id = int(f"-100{abs(chat_id)}")
+    # Don't forward media from poller — Telethon IDs can't be used
+    # with the Bot API, and the bot has no access to source channels.
     payload = {
         "sourceChatId": source_chat_id,
         "sourceTitle": chat_title,
         "text": text,
         "messageId": message.id,
-        "hasMedia": bool(message.media),
+        "hasMedia": False,
     }
-
-    if message.media:
-        if isinstance(message.media, MessageMediaPhoto):
-            payload["photo"] = {"fileId": message.media.photo.id}
-        elif isinstance(message.media, MessageMediaDocument):
-            doc = message.media.document
-            payload["document"] = {
-                "fileId": doc.id,
-                "mimeType": doc.mime_type,
-            }
 
     return payload
 
