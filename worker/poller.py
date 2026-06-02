@@ -321,6 +321,12 @@ async def main():
 
     failed_resolve: set[int | str] = set()
 
+    # Sync newly resolved channels to DB so they have telegramChatId set
+    for cid, entity in resolved.items():
+        uname = getattr(entity, "username", None)
+        if uname:
+            await sync_channel_to_db(uname, cid)
+
     last_message_id = {}
     for cid, entity in resolved.items():
         try:
