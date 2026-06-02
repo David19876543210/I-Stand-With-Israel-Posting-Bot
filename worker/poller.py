@@ -488,14 +488,18 @@ async def main():
         while True:
             for cid, entity in resolved.items():
                 try:
-                    msgs = await client.get_messages(entity, limit=1)
+                    last_id = last_message_id.get(cid, 0)
+                    msgs = await client.get_messages(entity, limit=10)
                     if not msgs:
                         continue
-                    msg = msgs[0]
-                    if msg.id > last_message_id.get(cid, 0):
+                    new_msgs = [m for m in msgs if m.id > last_id]
+                    if not new_msgs:
+                        continue
+                    # Process in chronological order
+                    for msg in reversed(new_msgs):
                         last_message_id[cid] = msg.id
                         chat = await client.get_entity(cid)
-                        logger.info(f"Polled new message from {getattr(chat, 'title', cid)}")
+                        logger.info(f"Polled new message {msg.id} from {getattr(chat, 'title', cid)}")
                         await process_and_send(msg, chat, cid)
                 except Exception as e:
                     logger.warning(f"Poll error for {cid}: {e}")
