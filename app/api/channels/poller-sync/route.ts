@@ -31,6 +31,7 @@ export async function POST(request: Request) {
           ...(username && /^\d+$/.test(username)
             ? [{ username: username }]
             : []),
+          { telegramChatId: BigInt(telegramChatId) },
         ],
       },
     })
