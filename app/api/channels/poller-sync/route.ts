@@ -19,12 +19,19 @@ export async function POST(request: Request) {
     const channel = await prisma.sourceChannel.findFirst({
       where: {
         OR: [
-          username ? { username: { equals: username, mode: "insensitive" } } : {},
-          title ? { title: { equals: title, mode: "insensitive" } } : {},
+          ...(username
+            ? [{ username: { equals: username, mode: "insensitive" as const } }]
+            : []),
+          ...(title
+            ? [
+                { title: { equals: title } },
+                { title: { equals: title, mode: "insensitive" as const } },
+              ]
+            : []),
           ...(username && /^\d+$/.test(username)
             ? [{ username: username }]
             : []),
-        ].filter((c) => Object.keys(c).length > 0),
+        ],
       },
     })
 
