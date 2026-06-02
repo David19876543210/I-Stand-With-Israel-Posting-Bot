@@ -259,9 +259,13 @@ async def forward_media_via_telethon(client, message, chat_title, process_result
     if not file_bytes:
         return []
 
-    # Determine file extension for send_file
+    # Determine file extension and type for send_file
     ext = "bin"
-    if hasattr(message.media, "document") and message.media.document:
+    is_photo = False
+    if hasattr(message.media, "photo") and message.media.photo:
+        ext = "jpg"
+        is_photo = True
+    elif hasattr(message.media, "document") and message.media.document:
         mime = getattr(message.media.document, "mime_type", "")
         if "video" in mime:
             ext = "mp4"
@@ -281,7 +285,11 @@ async def forward_media_via_telethon(client, message, chat_title, process_result
             entity = await client.get_entity(target_chat_id)
             file_obj = io.BytesIO(file_bytes)
             file_obj.name = f"media.{ext}"
-            sent = await client.send_file(entity, file_obj, caption=caption)
+            sent = await client.send_file(
+                entity, file_obj,
+                caption=caption,
+                force_document=not is_photo,
+            )
             target_msg_id = sent.id
             results.append({
                 "targetChannelId": t["targetChannelId"],
