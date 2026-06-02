@@ -62,7 +62,10 @@ async function lookupSourceChannel(msg: IncomingMessage) {
     { telegramChatId: BigInt(id) },
   ]
   if (msg.sourceUsername) {
-    orClauses.push({ username: msg.sourceUsername.replace("@", "") })
+    const uname = msg.sourceUsername.replace("@", "").trim()
+    orClauses.push({ username: uname })
+    orClauses.push({ username: { equals: uname, mode: "insensitive" } })
+    orClauses.push({ username: uname.toLowerCase() })
   }
   if (msg.sourceTitle) {
     orClauses.push({ title: msg.sourceTitle })
@@ -78,6 +81,14 @@ async function lookupSourceChannel(msg: IncomingMessage) {
   if (msg.sourceChatIdRaw !== undefined) {
     orClauses.push({ telegramChatId: msg.sourceChatIdRaw })
     orClauses.push({ telegramChatId: BigInt(msg.sourceChatIdRaw) })
+  }
+  // Fallback: try matching sourceChatIdRaw as a string username
+  if (msg.sourceChatIdRaw !== undefined) {
+    orClauses.push({ username: String(msg.sourceChatIdRaw) })
+    orClauses.push({ username: String(-1000000000000 - msg.sourceChatIdRaw) })
+  }
+  if (idWithoutPrefix !== id) {
+    orClauses.push({ username: String(idWithoutPrefix) })
   }
 
   const sourceChannel = await prisma.sourceChannel.findFirst({

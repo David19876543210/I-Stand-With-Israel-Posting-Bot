@@ -58,7 +58,7 @@ export async function POST(request: Request) {
       return NextResponse.json(pair, { status: 201 })
     }
 
-    const rawUsername = body.username.replace("@", "").trim()
+    const rawUsername = body.username.replace("@", "").trim().toLowerCase()
     const isNumeric = /^\d+$/.test(rawUsername)
     const chatId = isNumeric
       ? BigInt(rawUsername)

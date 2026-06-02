@@ -42,6 +42,7 @@ INGEST_URL = BASE_URL + "/api/ingest"
 PROCESS_URL = BASE_URL + "/api/telegram/process"
 REPORT_URL = BASE_URL + "/api/telegram/report"
 SOURCES_URL = BASE_URL + "/api/channels/sources"
+POLLER_SYNC_URL = BASE_URL + "/api/channels/poller-sync"
 INGEST_SECRET = os.environ.get("INGEST_SECRET", "")
 API_ID = int(os.environ.get("API_ID", 0))
 API_HASH = os.environ.get("API_HASH", "")
@@ -142,6 +143,26 @@ async def report_forward(data: dict) -> bool:
             return True
     except Exception as e:
         logger.error(f"Report connection error: {e}")
+        return False
+
+
+async def sync_channel_to_db(username: str, chat_id_raw: int) -> bool:
+    """Tell the API to store the numeric chat ID for this channel."""
+    try:
+        async with httpx.AsyncClient(timeout=10) as http:
+            resp = await http.post(
+                POLLER_SYNC_URL,
+                json={"username": username, "telegramChatId": chat_id_raw},
+                headers={"Authorization": f"Bearer {INGEST_SECRET}"},
+            )
+            if resp.status_code == 200:
+                logger.info(f"Synced {username} to DB: chatId={chat_id_raw}")
+                return True
+            else:
+                logger.warning(f"Sync error for {username}: {resp.status_code} {resp.text}")
+                return False
+    except Exception as e:
+        logger.warning(f"Sync connection error for {username}: {e}")
         return False
 
 
@@ -401,7 +422,11 @@ async def main():
                                 last_message_id[cid] = msgs[0].id if msgs else 0
                             except Exception:
                                 last_message_id[cid] = 0
-                            logger.info(f"Added new channel: {getattr(entity, 'title', cid)}")
+                            title = getattr(entity, 'title', str(cid))
+                            uname = getattr(entity, 'username', None)
+                            if uname:
+                                asyncio.ensure_future(sync_channel_to_db(uname, cid))
+                            logger.info(f"Added new channel: {title}")
                         for ident in need_resolve:
                             if isinstance(ident, str) and not ident.lstrip("-").isdigit():
                                 continue

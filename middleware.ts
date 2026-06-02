@@ -16,6 +16,7 @@ export function middleware(request: NextRequest) {
     "/api/telegram/webhook",
     "/api/translate",
     "/api/channels/sources",
+    "/api/channels/poller-sync",
     "/api/telegram/process",
     "/api/telegram/report",
   ]
