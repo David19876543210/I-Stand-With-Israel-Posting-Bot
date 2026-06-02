@@ -52,6 +52,9 @@ export async function processMessage(msg: IncomingMessage): Promise<{
   if (msg.sourceUsername) {
     orClauses.push({ username: msg.sourceUsername.replace("@", "") })
   }
+  if (msg.sourceTitle) {
+    orClauses.push({ title: msg.sourceTitle })
+  }
   if (idWithoutPrefix !== id) {
     orClauses.push({ telegramChatId: idWithoutPrefix })
     orClauses.push({ telegramChatId: BigInt(idWithoutPrefix) })
@@ -66,6 +69,9 @@ export async function processMessage(msg: IncomingMessage): Promise<{
   })
 
   if (!sourceChannel || !sourceChannel.isActive) {
+    console.warn(
+      `Source channel not found: chatId=${msg.sourceChatId}, title="${msg.sourceTitle}", username="${msg.sourceUsername}"`
+    )
     return { handled: false }
   }
 
@@ -79,6 +85,7 @@ export async function processMessage(msg: IncomingMessage): Promise<{
   })
 
   if (!settings?.isRunning) {
+    console.warn("Bot is paused, skipping message")
     return { handled: true, skipped: true }
   }
 
@@ -114,6 +121,9 @@ export async function processMessage(msg: IncomingMessage): Promise<{
   })
 
   if (pairs.length === 0) {
+    console.warn(
+      `No active forwarding pairs for source "${sourceTitle}" (${sourceChannel.id})`
+    )
     return { handled: true }
   }
 
