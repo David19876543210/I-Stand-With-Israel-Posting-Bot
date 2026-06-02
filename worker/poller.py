@@ -223,7 +223,8 @@ async def resolve_channels(client: TelegramClient, identifiers: list) -> dict:
 
 async def forward_media_via_telethon(client, message, chat_title, process_result):
     """
-    Download media and forward it to each target via Telethon.
+    Copy media message to each target via Telethon, preserving native previews.
+    Falls back to download+upload if forwarding fails.
     Returns list of results for reporting.
     """
     targets = process_result.get("targets", [])
@@ -237,66 +238,80 @@ async def forward_media_via_telethon(client, message, chat_title, process_result
     translated_text = process_result.get("translatedText")
 
     if translated_text and translated_text != original_text:
-        caption = f"{translated_text}\n\n📢 Source: {source_title}"
+        caption_text = f"{translated_text}\n\n📢 Source: {source_title}"
     elif original_text:
-        caption = f"{original_text}\n\n📢 Source: {source_title}"
+        caption_text = f"{original_text}\n\n📢 Source: {source_title}"
     else:
-        caption = ""
+        caption_text = ""
 
-    # Only proceed if there's media
     if not message.media:
         logger.info(f"No media to forward for {chat_title}")
         return []
 
-    file_bytes = None
-    try:
-        file_bytes = await client.download_media(message, file=bytes)
-        logger.info(f"Downloaded media ({len(file_bytes)} bytes) for telethon forward")
-    except Exception as e:
-        logger.warning(f"Could not download media: {e}")
-        return []
-
-    if not file_bytes:
-        return []
-
-    # Determine file extension and type for send_file
-    ext = "bin"
-    is_photo = False
-    if hasattr(message.media, "photo") and message.media.photo:
-        ext = "jpg"
-        is_photo = True
-    elif hasattr(message.media, "document") and message.media.document:
-        mime = getattr(message.media.document, "mime_type", "")
-        if "video" in mime:
-            ext = "mp4"
-        elif "gif" in mime:
-            ext = "gif"
-        elif "png" in mime:
-            ext = "png"
-        elif "jpg" in mime or "jpeg" in mime:
-            ext = "jpg"
-
-    import io
+    source_entity = await client.get_entity(message.chat_id)
     results = []
+
     for t in targets:
         target_chat_id = t["targetChatId"]
         target_title = t.get("targetTitle", str(target_chat_id))
         try:
-            entity = await client.get_entity(target_chat_id)
+            target_entity = await client.get_entity(target_chat_id)
+
+            # Try copy_message first — preserves native previews
+            try:
+                sent = await client.copy_message(target_entity, message.id, source_entity)
+                target_msg_id = sent.id
+                # If there's a caption to override, edit it
+                if caption_text:
+                    try:
+                        await client.edit_message(target_entity, sent.id, caption_text)
+                    except Exception:
+                        pass
+                results.append({
+                    "targetChannelId": t["targetChannelId"],
+                    "targetChatId": target_chat_id,
+                    "targetMessageId": target_msg_id,
+                })
+                logger.info(f"Copied media to {target_title}: message {target_msg_id}")
+                continue
+            except Exception as e:
+                logger.info(f"copy_message failed for {target_title}, trying send_file: {e}")
+
+            # Fallback: download and re-upload
+            file_bytes = await client.download_media(message, file=bytes)
+            if not file_bytes:
+                raise Exception("Could not download media")
+
+            ext = "bin"
+            if message.photo:
+                ext = "jpg"
+            elif message.video:
+                ext = "mp4"
+            elif message.gif:
+                ext = "gif"
+            elif message.document:
+                mime = getattr(message.media.document, "mime_type", "")
+                if "video" in mime:
+                    ext = "mp4"
+                elif "gif" in mime:
+                    ext = "gif"
+                elif "png" in mime:
+                    ext = "png"
+                elif "jpg" in mime or "jpeg" in mime:
+                    ext = "jpg"
+
+            import io
             file_obj = io.BytesIO(file_bytes)
             file_obj.name = f"media.{ext}"
-            sent = await client.send_file(
-                entity, file_obj,
-                caption=caption,
-                force_document=not is_photo,
-            )
+            sent = await client.send_file(target_entity, file_obj, caption=caption_text)
             target_msg_id = sent.id
             results.append({
                 "targetChannelId": t["targetChannelId"],
                 "targetChatId": target_chat_id,
                 "targetMessageId": target_msg_id,
             })
-            logger.info(f"Telethon forward to {target_title}: message {target_msg_id}")
+            logger.info(f"Uploaded media to {target_title}: message {target_msg_id}")
+
         except Exception as e:
             logger.warning(f"Telethon forward error to {target_title}: {e}")
             results.append({
@@ -305,6 +320,7 @@ async def forward_media_via_telethon(client, message, chat_title, process_result
                 "targetMessageId": None,
                 "error": str(e)[:200],
             })
+
     return results
 
 
