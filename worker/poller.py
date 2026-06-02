@@ -324,8 +324,13 @@ async def main():
     # Sync newly resolved channels to DB so they have telegramChatId set
     for cid, entity in resolved.items():
         uname = getattr(entity, "username", None)
+        title = getattr(entity, "title", "?")
+        logger.info(f"Sync check: cid={cid}, title={title}, username={uname}")
         if uname:
             await sync_channel_to_db(uname, cid)
+        else:
+            # Fallback: sync by chat ID directly
+            await sync_channel_to_db(str(cid), cid)
 
     last_message_id = {}
     for cid, entity in resolved.items():
