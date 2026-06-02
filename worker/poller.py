@@ -223,8 +223,7 @@ async def resolve_channels(client: TelegramClient, identifiers: list) -> dict:
 
 async def forward_media_via_telethon(client, message, chat_title, process_result):
     """
-    Copy media message to each target via Telethon, preserving native previews.
-    Falls back to download+upload if forwarding fails.
+    Download media and forward it to each target via Telethon.
     Returns list of results for reporting.
     """
     targets = process_result.get("targets", [])
@@ -232,52 +231,32 @@ async def forward_media_via_telethon(client, message, chat_title, process_result
         logger.info(f"No targets to forward media to for {chat_title}")
         return []
 
-    # Build translated caption
+    # Build translated caption (truncated to 1024 for media)
     source_title = process_result.get("sourceTitle", chat_title)
     original_text = process_result.get("originalText", "")
     translated_text = process_result.get("translatedText")
 
     if translated_text and translated_text != original_text:
-        caption_text = f"{translated_text}\n\n📢 Source: {source_title}"
+        caption = f"{translated_text}\n\n📢 Source: {source_title}"
     elif original_text:
-        caption_text = f"{original_text}\n\n📢 Source: {source_title}"
+        caption = f"{original_text}\n\n📢 Source: {source_title}"
     else:
-        caption_text = ""
+        caption = ""
+    caption = caption[:1024]
 
     if not message.media:
         logger.info(f"No media to forward for {chat_title}")
         return []
 
-    source_entity = await client.get_entity(message.chat_id)
+    import io
     results = []
-
     for t in targets:
         target_chat_id = t["targetChatId"]
         target_title = t.get("targetTitle", str(target_chat_id))
         try:
             target_entity = await client.get_entity(target_chat_id)
 
-            # Try copy_message first — preserves native previews
-            try:
-                sent = await client.copy_message(target_entity, message.id, source_entity)
-                target_msg_id = sent.id
-                # If there's a caption to override, edit it
-                if caption_text:
-                    try:
-                        await client.edit_message(target_entity, sent.id, caption_text)
-                    except Exception:
-                        pass
-                results.append({
-                    "targetChannelId": t["targetChannelId"],
-                    "targetChatId": target_chat_id,
-                    "targetMessageId": target_msg_id,
-                })
-                logger.info(f"Copied media to {target_title}: message {target_msg_id}")
-                continue
-            except Exception as e:
-                logger.info(f"copy_message failed for {target_title}, trying send_file: {e}")
-
-            # Fallback: download and re-upload
+            # Download media
             file_bytes = await client.download_media(message, file=bytes)
             if not file_bytes:
                 raise Exception("Could not download media")
@@ -300,17 +279,20 @@ async def forward_media_via_telethon(client, message, chat_title, process_result
                 elif "jpg" in mime or "jpeg" in mime:
                     ext = "jpg"
 
-            import io
             file_obj = io.BytesIO(file_bytes)
             file_obj.name = f"media.{ext}"
-            sent = await client.send_file(target_entity, file_obj, caption=caption_text)
+            sent = await client.send_file(
+                target_entity, file_obj,
+                caption=caption,
+                force_document=False,
+            )
             target_msg_id = sent.id
             results.append({
                 "targetChannelId": t["targetChannelId"],
                 "targetChatId": target_chat_id,
                 "targetMessageId": target_msg_id,
             })
-            logger.info(f"Uploaded media to {target_title}: message {target_msg_id}")
+            logger.info(f"Forwarded media to {target_title}: message {target_msg_id}")
 
         except Exception as e:
             logger.warning(f"Telethon forward error to {target_title}: {e}")
