@@ -231,7 +231,7 @@ async def forward_media_via_telethon(client, message, chat_title, process_result
         logger.info(f"No targets to forward media to for {chat_title}")
         return []
 
-    # Build translated caption (truncated to 1024 for media)
+    # Build translated caption
     source_title = process_result.get("sourceTitle", chat_title)
     original_text = process_result.get("originalText", "")
     translated_text = process_result.get("translatedText")
@@ -242,7 +242,6 @@ async def forward_media_via_telethon(client, message, chat_title, process_result
         caption = f"{original_text}\n\n📢 Source: {source_title}"
     else:
         caption = ""
-    caption = caption[:1024]
 
     if not message.media:
         logger.info(f"No media to forward for {chat_title}")
@@ -281,11 +280,26 @@ async def forward_media_via_telethon(client, message, chat_title, process_result
 
             file_obj = io.BytesIO(file_bytes)
             file_obj.name = f"media.{ext}"
-            sent = await client.send_file(
-                target_entity, file_obj,
-                caption=caption,
-                force_document=False,
-            )
+            try:
+                sent = await client.send_file(
+                    target_entity, file_obj,
+                    caption=caption,
+                    force_document=False,
+                )
+            except Exception as e:
+                err = str(e)
+                if "caption" in err.lower() and ("too long" in err.lower() or "media_caption_too_long" in err):
+                    # Caption too long — send media alone, then caption as reply
+                    file_obj.seek(0)
+                    sent = await client.send_file(
+                        target_entity, file_obj,
+                        caption="",
+                        force_document=False,
+                    )
+                    if caption:
+                        await client.send_message(target_entity, caption, reply_to=sent.id)
+                else:
+                    raise
             target_msg_id = sent.id
             results.append({
                 "targetChannelId": t["targetChannelId"],
