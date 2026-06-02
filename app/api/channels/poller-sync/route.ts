@@ -10,18 +10,21 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
-    const { username, telegramChatId } = await request.json()
+    const { username, telegramChatId, title } = await request.json()
 
-    if (!username || !telegramChatId) {
-      return NextResponse.json({ error: "Missing username or telegramChatId" }, { status: 400 })
+    if (!telegramChatId) {
+      return NextResponse.json({ error: "Missing telegramChatId" }, { status: 400 })
     }
 
     const channel = await prisma.sourceChannel.findFirst({
       where: {
-        username: {
-          equals: username,
-          mode: "insensitive",
-        },
+        OR: [
+          username ? { username: { equals: username, mode: "insensitive" } } : {},
+          title ? { title: { equals: title, mode: "insensitive" } } : {},
+          ...(username && /^\d+$/.test(username)
+            ? [{ username: username }]
+            : []),
+        ].filter((c) => Object.keys(c).length > 0),
       },
     })
 
@@ -29,9 +32,13 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Channel not found" }, { status: 404 })
     }
 
+    const updateData: any = { telegramChatId: BigInt(telegramChatId) }
+    if (username) updateData.username = username.toLowerCase()
+    if (title) updateData.title = title
+
     await prisma.sourceChannel.update({
       where: { id: channel.id },
-      data: { telegramChatId: BigInt(telegramChatId), username: username.toLowerCase() },
+      data: updateData,
     })
 
     return NextResponse.json({ success: true, channelId: channel.id })

@@ -146,23 +146,31 @@ async def report_forward(data: dict) -> bool:
         return False
 
 
-async def sync_channel_to_db(username: str, chat_id_raw: int) -> bool:
+async def sync_channel_to_db(username: str | None, chat_id_raw: int, title: str | None = None) -> bool:
     """Tell the API to store the numeric chat ID for this channel."""
     try:
+        body = {"telegramChatId": chat_id_raw}
+        if username:
+            body["username"] = username
+        if title:
+            body["title"] = title
         async with httpx.AsyncClient(timeout=10) as http:
             resp = await http.post(
                 POLLER_SYNC_URL,
-                json={"username": username, "telegramChatId": chat_id_raw},
+                json=body,
                 headers={"Authorization": f"Bearer {INGEST_SECRET}"},
             )
             if resp.status_code == 200:
-                logger.info(f"Synced {username} to DB: chatId={chat_id_raw}")
+                label = username or title or str(chat_id_raw)
+                logger.info(f"Synced {label} to DB: chatId={chat_id_raw}")
                 return True
             else:
-                logger.warning(f"Sync error for {username}: {resp.status_code} {resp.text}")
+                label = username or title or str(chat_id_raw)
+                logger.warning(f"Sync error for {label}: {resp.status_code} {resp.text}")
                 return False
     except Exception as e:
-        logger.warning(f"Sync connection error for {username}: {e}")
+        label = username or title or str(chat_id_raw)
+        logger.warning(f"Sync connection error for {label}: {e}")
         return False
 
 
@@ -322,15 +330,12 @@ async def main():
     failed_resolve: set[int | str] = set()
 
     # Sync newly resolved channels to DB so they have telegramChatId set
+    # Sync resolved channels to DB so they have telegramChatId set
     for cid, entity in resolved.items():
         uname = getattr(entity, "username", None)
-        title = getattr(entity, "title", "?")
-        logger.info(f"Sync check: cid={cid}, title={title}, username={uname}")
-        if uname:
-            await sync_channel_to_db(uname, cid)
-        else:
-            # Fallback: sync by chat ID directly
-            await sync_channel_to_db(str(cid), cid)
+        title = getattr(entity, "title", None)
+        identifier = uname or title or str(cid)
+        await sync_channel_to_db(uname, cid, title)
 
     last_message_id = {}
     for cid, entity in resolved.items():
