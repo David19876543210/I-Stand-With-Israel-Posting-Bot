@@ -237,9 +237,9 @@ async def forward_media_via_telethon(client, message, chat_title, process_result
     translated_text = process_result.get("translatedText")
 
     if translated_text and translated_text != original_text:
-        caption = f"{translated_text}\n\n📢 <i>Source: {source_title}</i>"
+        caption = f"{translated_text}\n\n📢 Source: {source_title}"
     elif original_text:
-        caption = f"{original_text}\n\n📢 <i>Source: {source_title}</i>"
+        caption = f"{original_text}\n\n📢 Source: {source_title}"
     else:
         caption = ""
 

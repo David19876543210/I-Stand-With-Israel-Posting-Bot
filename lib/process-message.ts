@@ -46,10 +46,10 @@ function formatBody(
   translatedText?: string | null
 ): string {
   if (translatedText && translatedText !== originalText) {
-    return `${translatedText}\n\n📢 <i>Source: ${sourceTitle}</i>`
+    return `${translatedText}\n\n📢 Source: ${sourceTitle}`
   }
   const body = originalText || ""
-  return body ? `${body}\n\n📢 <i>Source: ${sourceTitle}</i>` : ""
+  return body ? `${body}\n\n📢 Source: ${sourceTitle}` : ""
 }
 
 async function lookupSourceChannel(msg: IncomingMessage) {
