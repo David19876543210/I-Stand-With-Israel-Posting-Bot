@@ -5,15 +5,13 @@ the bot is NOT an admin.
 Reads messages from source channels via a user account (Telethon)
 and POSTs them to the Vercel ingest endpoint for processing.
 
-Run this on Railway, a VPS, or any host that supports long-running processes.
-
-Usage:
-  pip install telethon httpx python-dotenv
-  python poller.py
+- Text-only messages: sent to /api/ingest (Vercel forwards via bot)
+- Media messages: processed via /api/telegram/process, forwarded via Telethon directly,
+  then reported via /api/telegram/report
 
 Environment variables required:
   API_ID, API_HASH, PHONE_NUMBER, SESSION_STRING
-  INGEST_URL (your Vercel deployment URL + /api/ingest)
+  INGEST_URL (your Vercel deployment URL)
   INGEST_SECRET (shared secret for auth)
   SOURCE_CHANNEL_IDS (comma-separated Telegram chat IDs, used as fallback)
 """
@@ -41,6 +39,8 @@ logger = logging.getLogger(__name__)
 
 BASE_URL = os.environ.get("INGEST_URL", "").rstrip("/")
 INGEST_URL = BASE_URL + "/api/ingest"
+PROCESS_URL = BASE_URL + "/api/telegram/process"
+REPORT_URL = BASE_URL + "/api/telegram/report"
 SOURCES_URL = BASE_URL + "/api/channels/sources"
 INGEST_SECRET = os.environ.get("INGEST_SECRET", "")
 API_ID = int(os.environ.get("API_ID", 0))
@@ -104,6 +104,47 @@ async def send_to_ingest(payload: dict) -> bool:
         return False
 
 
+async def send_to_process(payload: dict) -> dict | None:
+    try:
+        async with httpx.AsyncClient(timeout=60) as http:
+            resp = await http.post(
+                PROCESS_URL,
+                json=payload,
+                headers={
+                    "Authorization": f"Bearer {INGEST_SECRET}",
+                    "Content-Type": "application/json",
+                },
+            )
+            if resp.status_code == 200:
+                return resp.json()
+            else:
+                logger.error(f"Process error {resp.status_code}: {resp.text}")
+                return None
+    except Exception as e:
+        logger.error(f"Process connection error: {e}")
+        return None
+
+
+async def report_forward(data: dict) -> bool:
+    try:
+        async with httpx.AsyncClient(timeout=15) as http:
+            resp = await http.post(
+                REPORT_URL,
+                json=data,
+                headers={
+                    "Authorization": f"Bearer {INGEST_SECRET}",
+                    "Content-Type": "application/json",
+                },
+            )
+            if resp.status_code != 200:
+                logger.error(f"Report error {resp.status_code}: {resp.text}")
+                return False
+            return True
+    except Exception as e:
+        logger.error(f"Report connection error: {e}")
+        return False
+
+
 async def fetch_sources_from_api() -> list[dict] | None:
     try:
         async with httpx.AsyncClient(timeout=15) as http:
@@ -152,6 +193,85 @@ async def resolve_channels(client: TelegramClient, identifiers: list) -> dict:
     return resolved
 
 
+async def forward_media_via_telethon(client, message, chat_title, process_result):
+    """
+    Download media and forward it to each target via Telethon.
+    Returns list of results for reporting.
+    """
+    targets = process_result.get("targets", [])
+    if not targets:
+        logger.info(f"No targets to forward media to for {chat_title}")
+        return []
+
+    # Build translated caption
+    source_title = process_result.get("sourceTitle", chat_title)
+    original_text = process_result.get("originalText", "")
+    translated_text = process_result.get("translatedText")
+
+    if translated_text and translated_text != original_text:
+        caption = f"{translated_text}\n\n📢 <i>Source: {source_title}</i>"
+    elif original_text:
+        caption = f"{original_text}\n\n📢 <i>Source: {source_title}</i>"
+    else:
+        caption = ""
+
+    # Only proceed if there's media
+    if not message.media:
+        logger.info(f"No media to forward for {chat_title}")
+        return []
+
+    file_bytes = None
+    try:
+        file_bytes = await client.download_media(message, file=bytes)
+        logger.info(f"Downloaded media ({len(file_bytes)} bytes) for telethon forward")
+    except Exception as e:
+        logger.warning(f"Could not download media: {e}")
+        return []
+
+    if not file_bytes:
+        return []
+
+    # Determine file extension for send_file
+    ext = "bin"
+    if hasattr(message.media, "document") and message.media.document:
+        mime = getattr(message.media.document, "mime_type", "")
+        if "video" in mime:
+            ext = "mp4"
+        elif "gif" in mime:
+            ext = "gif"
+        elif "png" in mime:
+            ext = "png"
+        elif "jpg" in mime or "jpeg" in mime:
+            ext = "jpg"
+
+    import io
+    results = []
+    for t in targets:
+        target_chat_id = t["targetChatId"]
+        target_title = t.get("targetTitle", str(target_chat_id))
+        try:
+            entity = await client.get_entity(target_chat_id)
+            file_obj = io.BytesIO(file_bytes)
+            file_obj.name = f"media.{ext}"
+            sent = await client.send_file(entity, file_obj, caption=caption)
+            target_msg_id = sent.id
+            results.append({
+                "targetChannelId": t["targetChannelId"],
+                "targetChatId": target_chat_id,
+                "targetMessageId": target_msg_id,
+            })
+            logger.info(f"Telethon forward to {target_title}: message {target_msg_id}")
+        except Exception as e:
+            logger.warning(f"Telethon forward error to {target_title}: {e}")
+            results.append({
+                "targetChannelId": t["targetChannelId"],
+                "targetChatId": target_chat_id,
+                "targetMessageId": None,
+                "error": str(e)[:200],
+            })
+    return results
+
+
 async def main():
     if not INGEST_URL or INGEST_URL == "/api/ingest":
         logger.error("INGEST_URL is not configured")
@@ -193,42 +313,52 @@ async def main():
     async def process_and_send(message, chat, chat_id):
         chat_title = getattr(chat, "title", getattr(chat, "username", str(chat_id)))
         chat_username = getattr(chat, "username", None)
-        payload = build_payload(message, chat_id, chat_title)
-        if chat_username:
-            payload["sourceUsername"] = chat_username
+        has_media = bool(message.media)
 
-        MAX_MEDIA_BYTES = 3_000_000
-        if message.media and hasattr(message.media, "photo"):
-            try:
-                file_bytes = await client.download_media(message, file=bytes)
-                if file_bytes and len(file_bytes) < MAX_MEDIA_BYTES:
-                    payload["photoData"] = base64.b64encode(file_bytes).decode()
-                    payload["hasMedia"] = True
-                    logger.info(f"Downloaded photo ({len(file_bytes)} bytes)")
-                elif file_bytes:
-                    logger.warning(f"Photo too large ({len(file_bytes)} bytes), skipping media")
-            except Exception as e:
-                logger.warning(f"Could not download photo: {e}")
-        elif message.media and hasattr(message.media, "document"):
-            try:
-                file_bytes = await client.download_media(message, file=bytes)
-                if file_bytes and len(file_bytes) < MAX_MEDIA_BYTES:
-                    mime = getattr(message.media.document, "mime_type", "application/octet-stream")
-                    payload["documentData"] = base64.b64encode(file_bytes).decode()
-                    payload["documentMime"] = mime
-                    payload["hasMedia"] = True
-                    logger.info(f"Downloaded document ({len(file_bytes)} bytes, {mime})")
-                elif file_bytes:
-                    logger.warning(f"Document too large ({len(file_bytes)} bytes, {getattr(message.media.document, 'mime_type', '?')}), skipping media")
-            except Exception as e:
-                logger.warning(f"Could not download document: {e}")
+        if has_media:
+            # For media messages: process via /api/telegram/process, forward via Telethon
+            payload = build_payload(message, chat_id, chat_title)
+            payload["hasMedia"] = True
+            if chat_username:
+                payload["sourceUsername"] = chat_username
 
-        logger.info(f"Message from {chat_title}: {payload.get('text', '')[:60]}...")
-        ok = await send_to_ingest(payload)
-        if ok:
-            logger.info(f"Sent to ingest: {chat_title}")
+            logger.info(f"Processing media message from {chat_title}")
+            result = await send_to_process(payload)
+
+            if result and result.get("ok") and result.get("targets"):
+                telethon_results = await forward_media_via_telethon(
+                    client, message, chat_title, result
+                )
+                if telethon_results:
+                    report_data = {
+                        "sourceChannelId": result["sourceChannelId"],
+                        "originalText": result.get("originalText", ""),
+                        "translatedText": result.get("translatedText"),
+                        "detectedLang": result.get("detectedLang"),
+                        "isAd": result.get("isAd", False),
+                        "adDetectedBy": result.get("adDetectedBy"),
+                        "results": telethon_results,
+                    }
+                    await report_forward(report_data)
+                    logger.info(f"Forwarded media message from {chat_title}")
+                else:
+                    logger.warning(f"No telethon results for {chat_title}")
+            elif result and result.get("ok"):
+                logger.info(f"Processed but no targets for {chat_title}")
+            else:
+                logger.warning(f"Process failed for {chat_title}: {result}")
         else:
-            logger.warning(f"Failed to send: {chat_title}")
+            # Text-only: use existing ingest flow (Vercel forwards via bot)
+            payload = build_payload(message, chat_id, chat_title)
+            if chat_username:
+                payload["sourceUsername"] = chat_username
+
+            logger.info(f"Message from {chat_title}: {payload.get('text', '')[:60]}...")
+            ok = await send_to_ingest(payload)
+            if ok:
+                logger.info(f"Sent to ingest: {chat_title}")
+            else:
+                logger.warning(f"Failed to send: {chat_title}")
 
     @client.on(events.NewMessage())
     async def handler(event):

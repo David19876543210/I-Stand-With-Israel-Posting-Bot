@@ -25,6 +25,21 @@ export interface IncomingMessage {
   documentMime?: string
 }
 
+export interface ProcessResult {
+  sourceChannelId: string
+  sourceTitle: string
+  originalText: string
+  translatedText: string | null
+  detectedLang: string | null
+  isAd: boolean
+  adDetectedBy: string | null
+  pairs: {
+    id: string
+    targetChatId: number
+    targetTitle: string
+  }[]
+}
+
 function formatBody(
   originalText: string,
   sourceTitle: string,
@@ -37,11 +52,7 @@ function formatBody(
   return body ? `${body}\n\n📢 <i>Source: ${sourceTitle}</i>` : ""
 }
 
-export async function processMessage(msg: IncomingMessage): Promise<{
-  handled: boolean
-  skipped?: boolean
-  error?: string
-}> {
+async function lookupSourceChannel(msg: IncomingMessage) {
   const id = msg.sourceChatId
   const idWithoutPrefix = id < 0 ? Math.abs(id) % 1000000000000 : id
   const idWithPrefix = id > 0 ? -id - 1000000000000 : id
@@ -72,12 +83,23 @@ export async function processMessage(msg: IncomingMessage): Promise<{
   const sourceChannel = await prisma.sourceChannel.findFirst({
     where: { OR: orClauses },
   })
+  return sourceChannel
+}
+
+export async function processMessageMetadata(msg: IncomingMessage): Promise<{
+  sourceChannel: any
+  settings: any
+  text: string
+  adResult: { isAd: boolean; method: string | null }
+  translatedText: string | null
+  detectedLang: string | null
+  sourceTitle: string
+  pairs: any[]
+} | { error: string }> {
+  const sourceChannel = await lookupSourceChannel(msg)
 
   if (!sourceChannel || !sourceChannel.isActive) {
-    console.warn(
-      `Source channel not found: chatId=${msg.sourceChatId}, title="${msg.sourceTitle}", username="${msg.sourceUsername}"`
-    )
-    return { handled: false }
+    return { error: `Source channel not found` }
   }
 
   await prisma.sourceChannel.update({
@@ -90,8 +112,7 @@ export async function processMessage(msg: IncomingMessage): Promise<{
   })
 
   if (!settings?.isRunning) {
-    console.warn("Bot is paused, skipping message")
-    return { handled: true, skipped: true }
+    return { error: "Bot is paused" }
   }
 
   const text = msg.text || ""
@@ -125,10 +146,42 @@ export async function processMessage(msg: IncomingMessage): Promise<{
     include: { targetChannel: true },
   })
 
+  return {
+    sourceChannel,
+    settings,
+    text,
+    adResult,
+    translatedText,
+    detectedLang,
+    sourceTitle,
+    pairs,
+  }
+}
+
+export async function processMessage(msg: IncomingMessage): Promise<{
+  handled: boolean
+  skipped?: boolean
+  error?: string
+}> {
+  const meta = await processMessageMetadata(msg)
+  if ("error" in meta) {
+    if (meta.error === "Bot is paused") {
+      return { handled: true, skipped: true }
+    }
+    return { handled: false }
+  }
+
+  const {
+    sourceChannel,
+    text,
+    adResult,
+    translatedText,
+    detectedLang,
+    sourceTitle,
+    pairs,
+  } = meta
+
   if (pairs.length === 0) {
-    console.warn(
-      `No active forwarding pairs for source "${sourceTitle}" (${sourceChannel.id})`
-    )
     return { handled: true }
   }
 
