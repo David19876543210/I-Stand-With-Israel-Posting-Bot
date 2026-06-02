@@ -154,18 +154,19 @@ async def sync_channel_to_db(username: str | None, chat_id_raw: int, title: str 
             body["username"] = username
         if title:
             body["title"] = title
+        logger.info(f"Sync REQUEST body={body}")
         async with httpx.AsyncClient(timeout=10) as http:
             resp = await http.post(
                 POLLER_SYNC_URL,
                 json=body,
                 headers={"Authorization": f"Bearer {INGEST_SECRET}"},
             )
+            label = username or title or str(chat_id_raw)
+            logger.info(f"Sync RESPONSE status={resp.status_code} body={resp.text}")
             if resp.status_code == 200:
-                label = username or title or str(chat_id_raw)
                 logger.info(f"Synced {label} to DB: chatId={chat_id_raw}")
                 return True
             else:
-                label = username or title or str(chat_id_raw)
                 logger.warning(f"Sync error for {label}: {resp.status_code} {resp.text}")
                 return False
     except Exception as e:
