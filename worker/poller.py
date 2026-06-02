@@ -75,6 +75,7 @@ def build_payload(message, chat_id: int, chat_title: str) -> dict:
     source_chat_id = int(f"-100{abs(chat_id)}")
     payload = {
         "sourceChatId": source_chat_id,
+        "sourceChatIdRaw": chat_id,
         "sourceTitle": chat_title,
         "text": text,
         "messageId": message.id,

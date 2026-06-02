@@ -12,6 +12,7 @@ import {
 
 export interface IncomingMessage {
   sourceChatId: number
+  sourceChatIdRaw?: number
   sourceTitle?: string
   sourceUsername?: string
   text?: string | null
@@ -62,6 +63,10 @@ export async function processMessage(msg: IncomingMessage): Promise<{
   if (idWithPrefix !== id) {
     orClauses.push({ telegramChatId: idWithPrefix })
     orClauses.push({ telegramChatId: BigInt(idWithPrefix) })
+  }
+  if (msg.sourceChatIdRaw !== undefined) {
+    orClauses.push({ telegramChatId: msg.sourceChatIdRaw })
+    orClauses.push({ telegramChatId: BigInt(msg.sourceChatIdRaw) })
   }
 
   const sourceChannel = await prisma.sourceChannel.findFirst({
