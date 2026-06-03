@@ -27,7 +27,7 @@ export interface OpenRouterResponse {
 }
 
 const DEFAULT_CONFIG: Partial<OpenRouterConfig> = {
-  model: "openai/gpt-oss-120b:free",
+  model: process.env.OPENROUTER_MODEL || "nvidia/nemotron-3-super-120b-a12b:free",
   maxTokens: 1024,
   temperature: 0.1,
 }
