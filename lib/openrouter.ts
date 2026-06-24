@@ -79,28 +79,65 @@ export async function chatCompletion(
   return data.choices[0]?.message?.content?.trim() || ""
 }
 
+function hasHebrew(text: string): boolean {
+  return /[\u0590-\u05FF\uFB1D-\uFB4F]/.test(text)
+}
+
+const FALLBACK_MODELS = [
+  "nvidia/nemotron-3-super-120b-a12b:free",
+  "google/gemini-2.0-flash-lite-preview-02-05:free",
+  "mistralai/mistral-small-24b-instruct-2501:free",
+  "openai/gpt-4o-mini",
+]
+
 export async function translateText(
   text: string,
   targetLang: string = "en"
 ): Promise<{ translatedText: string; detectedLang: string }> {
-  const messages: ChatMessage[] = [
-    {
-      role: "system",
-      content: `You are a professional translator specializing in Hebrew and Arabic news. Translate the following text to ${targetLang === "en" ? "English" : targetLang}. Focus on the meaning and intent behind the message — use natural, fluent English that reads like a native wrote it. Avoid literal word-for-word translation. If the text is already in ${targetLang === "en" ? "English" : targetLang}, respond with "[ALREADY_TARGET_LANG]". Only respond with the translation, no explanations.`,
-    },
-    {
-      role: "user",
-      content: text.slice(0, 2000),
-    },
+  const targetLangName = targetLang === "en" ? "English" : targetLang
+  const maxRetries = 2
+  let lastError: Error | null = null
+
+  const models = [
+    process.env.OPENROUTER_MODEL || FALLBACK_MODELS[0],
+    ...FALLBACK_MODELS,
   ]
 
-  const result = await chatCompletion(messages, { temperature: 0.1 })
+  for (const model of models) {
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        const messages: ChatMessage[] = [
+          {
+            role: "system",
+            content: `You are a professional translator specializing in Hebrew and Arabic news. Translate the following text to ${targetLangName}. Focus on the meaning and intent behind the message — use natural, fluent English that reads like a native wrote it. Avoid literal word-for-word translation. If the text is already in ${targetLangName}, respond with "[ALREADY_TARGET_LANG]". Only respond with the translation, no explanations. Translate ALL text including channel names, hashtags, and link labels.`,
+          },
+          {
+            role: "user",
+            content: text.slice(0, 2000),
+          },
+        ]
 
-  if (result === "[ALREADY_TARGET_LANG]") {
-    return { translatedText: text, detectedLang: targetLang }
+        const result = await chatCompletion(messages, {
+          temperature: 0.1,
+          model,
+          maxTokens: 4096,
+        })
+
+        if (result === "[ALREADY_TARGET_LANG]") {
+          return { translatedText: text, detectedLang: targetLang }
+        }
+
+        return { translatedText: result, detectedLang: "unknown" }
+      } catch (err) {
+        lastError = err as Error
+        if (attempt < maxRetries) {
+          await new Promise((resolve) => setTimeout(resolve, 1000 * (attempt + 1)))
+        }
+      }
+    }
   }
 
-  return { translatedText: result, detectedLang: "unknown" }
+  throw lastError || new Error("Translation failed after all retries and fallback models")
 }
 
 export async function detectAd(

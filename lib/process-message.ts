@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma"
-import { translateText } from "@/lib/openrouter"
+import { translateText, chatCompletion } from "@/lib/openrouter"
 import { isAdvertisement } from "@/lib/ad-detection"
 import {
   sendMessage,
@@ -9,6 +9,35 @@ import {
   sendDocumentUpload,
   copyMessage,
 } from "@/lib/telegram"
+
+const titleCache = new Map<string, string>()
+
+function hasHebrew(s: string): boolean {
+  return /[\u0590-\u05FF]/.test(s)
+}
+
+async function translateSourceTitle(title: string): Promise<string> {
+  if (!title || !hasHebrew(title)) return title
+  const cached = titleCache.get(title)
+  if (cached) return cached
+  try {
+    const result = await chatCompletion(
+      [
+        {
+          role: "system",
+          content: "Translate the following Hebrew channel name to English. Respond with ONLY the translation, no quotes, no explanations.",
+        },
+        { role: "user", content: title },
+      ],
+      { temperature: 0, maxTokens: 100 }
+    )
+    if (result && !hasHebrew(result)) {
+      titleCache.set(title, result)
+      return result
+    }
+  } catch {}
+  return title
+}
 
 export interface IncomingMessage {
   sourceChatId: number
@@ -104,6 +133,7 @@ export async function processMessageMetadata(msg: IncomingMessage): Promise<{
   adResult: { isAd: boolean; method: string | null }
   translatedText: string | null
   detectedLang: string | null
+  translationError: string | null
   sourceTitle: string
   pairs: any[]
 } | { error: string }> {
@@ -135,19 +165,27 @@ export async function processMessageMetadata(msg: IncomingMessage): Promise<{
 
   let translatedText: string | null = null
   let detectedLang: string | null = null
+  let translationError: string | null = null
 
   if (settings.translationEnabled && text) {
     try {
       const result = await translateText(text)
       translatedText = result.translatedText
       detectedLang = result.detectedLang
-    } catch (err) {
+      if (translatedText && /[\u0590-\u05FF]/.test(translatedText)) {
+        console.warn("Translation still contains Hebrew characters, retrying...")
+        const retry = await translateText(text)
+        translatedText = retry.translatedText
+      }
+    } catch (err: any) {
+      translationError = err.message?.slice(0, 500) || "Translation failed"
       console.error("Translation error:", err)
     }
   }
 
-  const sourceTitle =
+  const sourceTitle = await translateSourceTitle(
     msg.sourceTitle || sourceChannel.title || sourceChannel.username || "Unknown"
+  )
 
   const pairs = await prisma.forwardingPair.findMany({
     where: {
@@ -165,6 +203,7 @@ export async function processMessageMetadata(msg: IncomingMessage): Promise<{
     translatedText,
     detectedLang,
     sourceTitle,
+    translationError,
     pairs,
   }
 }
@@ -189,6 +228,7 @@ export async function processMessage(msg: IncomingMessage): Promise<{
     translatedText,
     detectedLang,
     sourceTitle,
+    translationError,
     pairs,
   } = meta
 
@@ -253,7 +293,8 @@ export async function processMessage(msg: IncomingMessage): Promise<{
           originalText: text.slice(0, 1000),
           translatedText: translatedText?.slice(0, 1000),
           detectedLang,
-          status: "forwarded",
+          status: translationError ? "error" : "forwarded",
+          errorMessage: translationError,
           isAd: adResult.isAd,
           adDetectedBy: adResult.method,
           targetChatId: BigInt(targetChatId),
@@ -262,6 +303,7 @@ export async function processMessage(msg: IncomingMessage): Promise<{
       })
     } catch (err: any) {
       console.error(`Forward error to ${target.username}:`, err)
+      const fwdErr = err.message?.slice(0, 500) || "Forward failed"
       await prisma.translationLog.create({
         data: {
           sourceChannelId: sourceChannel.id,
@@ -270,7 +312,9 @@ export async function processMessage(msg: IncomingMessage): Promise<{
           translatedText: translatedText?.slice(0, 500),
           detectedLang,
           status: "error",
-          errorMessage: err.message?.slice(0, 500) || "Forward failed",
+          errorMessage: translationError
+            ? `Translation: ${translationError} | Forward: ${fwdErr}`
+            : fwdErr,
           isAd: adResult.isAd,
           adDetectedBy: adResult.method,
         },
